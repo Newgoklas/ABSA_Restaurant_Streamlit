@@ -5,6 +5,16 @@ import re
 from datetime import datetime
 
 # ===============================
+# Konfigurasi Halaman
+# ===============================
+
+st.set_page_config(
+    page_title="ABSA Restaurant Analyzer",
+    page_icon="🍽️",
+    layout="wide"
+)
+
+# ===============================
 # Load Model
 # ===============================
 
@@ -14,30 +24,37 @@ def load_models():
         absa_model = joblib.load("absa_model.pkl")
         ner_model = joblib.load("ner_model.pkl")
         return absa_model, ner_model
-    except:
+    except Exception as e:
+        st.error(f"Error loading models: {str(e)}")
         return None, None
 
 absa_model, ner_model = load_models()
+
+if absa_model is None or ner_model is None:
+    st.warning("⚠️ Model tidak ditemukan. Gunakan rule-based sentiment analysis.")
+else:
+    st.success("✅ Model berhasil dimuat!")
 
 # ===============================
 # Rule-Based Sentiment Fallback
 # ===============================
 
-# Kamus kata-kata positif dan negatif
 POSITIVE_WORDS = {
     'enak', 'lezat', 'nikmat', 'sedap', 'mantap', 'juara', 'recommended',
     'cepat', 'ramah', 'baik', 'memuaskan', 'profesional', 'luar biasa',
     'bersih', 'nyaman', 'cozy', 'tenang', 'sejuk', 'indah',
     'murah', 'terjangkau', 'worth', 'sesuai', 'hemat',
-    'bagus', 'sangat', 'sekali', 'banget', 'suka', 'senang'
+    'bagus', 'sangat', 'sekali', 'banget', 'suka', 'senang',
+    'oke', 'ok', 'good', 'great', 'awesome', 'perfect'
 }
 
 NEGATIVE_WORDS = {
     'lambat', 'buruk', 'jelek', 'tidak', 'kurang', 'kecewa', 'parah',
-    'menyebalkan', 'tidak enak', 'hambar', 'basi', 'tidak fresh',
-    'mahal', 'terlalu', 'murah', 'kotor', 'berisik', 'pengap',
+    'menyebalkan', 'hambar', 'basi', 'tidak fresh',
+    'mahal', 'terlalu', 'kotor', 'berisik', 'pengap',
     'tidak ramah', 'tidak profesional', 'tidak memuaskan',
-    'rusak', 'pecah', 'bocor', 'hilang', 'salah'
+    'rusak', 'pecah', 'bocor', 'hilang', 'salah',
+    'aneh', 'payah', 'gagal', 'nyesal', 'menyesal'
 }
 
 def get_sentiment_rule_based(context):
@@ -48,32 +65,51 @@ def get_sentiment_rule_based(context):
     pos_score = 0
     neg_score = 0
     
-    for word in words:
+    # Check for negation patterns first
+    negation_found = False
+    negation_words = {'tidak', 'ga', 'gak', 'kurang', 'bukan', 'belum'}
+    
+    for i, word in enumerate(words):
+        # Check if current word is negation
+        if word in negation_words:
+            negation_found = True
+            # Check next word
+            if i + 1 < len(words):
+                next_word = words[i + 1]
+                if next_word in POSITIVE_WORDS:
+                    neg_score += 3  # "tidak enak" -> negative
+                    pos_score -= 1
+                elif next_word in NEGATIVE_WORDS:
+                    pos_score += 3  # "tidak lambat" -> positive
+                    neg_score -= 1
+            continue
+        
+        # Check for negative phrases
+        if 'tidak enak' in context_lower or 'ga enak' in context_lower or 'gak enak' in context_lower:
+            neg_score += 5
+            continue
+        
+        if 'tidak enak' in context_lower or 'ga enak' in context_lower or 'gak enak' in context_lower:
+            neg_score += 5
+            continue
+        
+        # Check individual words
         if word in POSITIVE_WORDS:
             pos_score += 1
         if word in NEGATIVE_WORDS:
             neg_score += 1
-        # Check for negation patterns
-        if word == 'tidak' or word == 'ga' or word == 'gak' or word == 'kurang':
-            # Check next word
-            idx = words.index(word)
-            if idx + 1 < len(words):
-                next_word = words[idx + 1]
-                if next_word in POSITIVE_WORDS:
-                    neg_score += 2  # "tidak enak" -> negative
-                if next_word in NEGATIVE_WORDS:
-                    pos_score += 2  # "tidak lambat" -> positive
     
-    # Special cases
-    if 'lambat' in context_lower:
-        neg_score += 3
-    if 'cepat' in context_lower:
-        pos_score += 3
-    if 'buruk' in context_lower or 'jelek' in context_lower:
-        neg_score += 3
-    if 'baik' in context_lower or 'bagus' in context_lower:
-        pos_score += 3
+    # Special cases for common phrases
+    if 'tidak enak' in context_lower or 'ga enak' in context_lower:
+        neg_score += 5
+    if 'sangat enak' in context_lower or 'enak sekali' in context_lower:
+        pos_score += 5
+    if 'sangat lambat' in context_lower or 'lambat sekali' in context_lower:
+        neg_score += 5
+    if 'sangat cepat' in context_lower or 'cepat sekali' in context_lower:
+        pos_score += 5
     
+    # Determine sentiment
     if pos_score > neg_score:
         return 'Positive'
     elif neg_score > pos_score:
@@ -84,15 +120,18 @@ def get_sentiment_rule_based(context):
 def predict_sentiment_hybrid(context):
     """Hybrid prediction: model + rule-based"""
     try:
-        # Try model first
+        # Try model first if available
         if absa_model is not None:
-            pred = absa_model.predict([context])[0]
-            # If model returns neutral but context has strong signals
-            if pred == 'Neutral':
-                rule_pred = get_sentiment_rule_based(context)
-                if rule_pred != 'Neutral':
-                    return rule_pred
-            return pred
+            try:
+                pred = absa_model.predict([context])[0]
+                # If model returns neutral but context has strong signals
+                if pred == 'Neutral':
+                    rule_pred = get_sentiment_rule_based(context)
+                    if rule_pred != 'Neutral':
+                        return rule_pred
+                return pred
+            except:
+                return get_sentiment_rule_based(context)
         else:
             return get_sentiment_rule_based(context)
     except:
@@ -172,6 +211,9 @@ def predict_ner(review):
             return words, ["O"] * len(words)
             
         features = sentence2features(words)
+        if not features:
+            return words, ["O"] * len(words)
+            
         tags = ner_model.predict([features])[0]
         return words, tags
     except:
@@ -224,7 +266,6 @@ def predict_review(review):
         hasil = []
         
         for item in aspects:
-            # Gunakan hybrid sentiment
             sentiment = predict_sentiment_hybrid(item["context"])
             hasil.append({
                 "Aspect": item["aspect"] if item["aspect"] else "Miscellaneous",
@@ -234,18 +275,34 @@ def predict_review(review):
         
         return pd.DataFrame(hasil)
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"Error in prediction: {str(e)}")
         return pd.DataFrame()
+
+# ===============================
+# UI Functions
+# ===============================
+
+def color_sentiment(val):
+    """Color sentiment values for dataframe"""
+    if val.lower() == 'positive':
+        return 'background-color: #d4edda; color: #155724; font-weight: bold;'
+    elif val.lower() == 'negative':
+        return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
+    else:
+        return 'background-color: #e2e3e5; color: #383d41; font-weight: bold;'
+
+def get_sentiment_emoji(sentiment):
+    """Get emoji for sentiment"""
+    if sentiment.lower() == 'positive':
+        return '🟢'
+    elif sentiment.lower() == 'negative':
+        return '🔴'
+    else:
+        return '⚪'
 
 # ===============================
 # UI - Main
 # ===============================
-
-st.set_page_config(
-    page_title="ABSA Restaurant Analyzer",
-    page_icon="🍽️",
-    layout="wide"
-)
 
 st.title("🍽️ Aspect Based Sentiment Analysis")
 st.markdown("Analisis Sentimen Review Restoran Berbasis Aspek")
@@ -281,14 +338,34 @@ with st.sidebar:
     - 🔴 **Negative** - Negatif
     - ⚪ **Neutral** - Netral
     """)
+    
+    st.divider()
+    
+    st.subheader("📌 Contoh Review")
+    contoh = st.selectbox(
+        "Pilih contoh review:",
+        [
+            "pelayanan lambat",
+            "makanannya tidak enak",
+            "makanan enak pelayanan ramah",
+            "harga mahal tempat nyaman",
+            "pelayanan cepat makanan enak"
+        ]
+    )
+    if st.button("📋 Gunakan Contoh", use_container_width=True):
+        st.session_state['contoh'] = contoh
 
 # Main content
 col1, col2 = st.columns([3, 1])
 
 with col1:
     st.subheader("✍️ Masukkan Review")
+    
+    default_text = st.session_state.get('contoh', '')
+    
     review = st.text_area(
         "Review Restoran",
+        value=default_text,
         height=150,
         placeholder="Contoh: Makanan enak, pelayanan lambat, tempatnya nyaman...",
         label_visibility="collapsed"
@@ -333,19 +410,32 @@ if analyze_button:
                 with col_total:
                     st.metric("📊 Total Aspek", total)
                 
-                # Results table
+                # Results table - FIXED applymap -> map
                 st.subheader("📋 Hasil Analisis per Aspek")
                 
-                def color_sentiment(val):
-                    if val.lower() == 'positive':
-                        return 'background-color: #d4edda; color: #155724;'
-                    elif val.lower() == 'negative':
-                        return 'background-color: #f8d7da; color: #721c24;'
-                    else:
-                        return 'background-color: #e2e3e5; color: #383d41;'
+                # Create a copy for display
+                display_df = hasil.copy()
+                display_df['Sentiment'] = display_df['Sentiment'].apply(
+                    lambda x: f"{get_sentiment_emoji(x)} {x}"
+                )
                 
-                styled_df = hasil.style.applymap(color_sentiment, subset=['Sentiment'])
-                st.dataframe(styled_df, use_container_width=True, height=300)
+                # Apply styling using map (not applymap)
+                styled_df = display_df.style.map(
+                    color_sentiment, 
+                    subset=['Sentiment']
+                )
+                
+                # Display styled dataframe
+                st.dataframe(
+                    styled_df,
+                    use_container_width=True,
+                    height=300,
+                    column_config={
+                        "Aspect": "Aspek",
+                        "Context": "Konteks",
+                        "Sentiment": "Sentimen"
+                    }
+                )
                 
                 # NER Visualization
                 st.divider()
@@ -385,6 +475,8 @@ if analyze_button:
                     st.markdown(token_html, unsafe_allow_html=True)
                     
                     st.caption("🎨 **Legend:** B-FOOD/I-FOOD 🍔 | B-SERVICE/I-SERVICE 🛎️ | B-AMBIENCE/I-AMBIENCE 🏠 | B-PRICE/I-PRICE 💰 | B-MISCELLANEOUS/I-MISCELLANEOUS 📌")
+                else:
+                    st.info("Tidak ada token yang dapat divisualisasikan")
                 
                 # Download
                 st.divider()
@@ -398,6 +490,7 @@ if analyze_button:
                 
             else:
                 st.warning("⚠️ Tidak ditemukan aspek yang dapat dianalisis dalam review.")
+                st.info("💡 Pastikan review mengandung kata-kata seperti 'makanan', 'pelayanan', 'tempat', atau 'harga'.")
 
 st.divider()
 st.caption("""
