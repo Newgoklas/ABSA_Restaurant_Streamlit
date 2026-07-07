@@ -42,10 +42,11 @@ else:
 POSITIVE_WORDS = {
     'enak', 'lezat', 'nikmat', 'sedap', 'mantap', 'juara', 'recommended',
     'cepat', 'ramah', 'baik', 'memuaskan', 'profesional', 'luar biasa',
-    'bersih', 'nyaman', 'cozy', 'tenang', 'sejuk', 'indah',
+    'bersih', 'nyaman', 'cozy', 'tenang', 'sejuk', 'indah', 'asri',
     'murah', 'terjangkau', 'worth', 'sesuai', 'hemat',
     'bagus', 'sangat', 'sekali', 'banget', 'suka', 'senang',
-    'oke', 'ok', 'good', 'great', 'awesome', 'perfect'
+    'oke', 'ok', 'good', 'great', 'awesome', 'perfect',
+    'nyaman', 'segar', 'rapi', 'tertata', 'luas', 'terang'
 }
 
 NEGATIVE_WORDS = {
@@ -54,7 +55,9 @@ NEGATIVE_WORDS = {
     'mahal', 'terlalu', 'kotor', 'berisik', 'pengap',
     'tidak ramah', 'tidak profesional', 'tidak memuaskan',
     'rusak', 'pecah', 'bocor', 'hilang', 'salah',
-    'aneh', 'payah', 'gagal', 'nyesal', 'menyesal'
+    'aneh', 'payah', 'gagal', 'nyesal', 'menyesal',
+    'tidak nyaman', 'ga nyaman', 'gak nyaman', 'sumpek', 'panas',
+    'gelap', 'sempit', 'kumuh', 'bau', 'tidak bersih'
 }
 
 def get_sentiment_rule_based(context):
@@ -66,8 +69,23 @@ def get_sentiment_rule_based(context):
     neg_score = 0
     
     # Check for negation patterns first
-    negation_found = False
     negation_words = {'tidak', 'ga', 'gak', 'kurang', 'bukan', 'belum'}
+    negation_found = False
+    
+    # Special cases for common negative phrases
+    negative_phrases = [
+        'tidak enak', 'ga enak', 'gak enak', 'tidak nyaman', 'ga nyaman', 'gak nyaman',
+        'tidak bersih', 'ga bersih', 'tidak ramah', 'ga ramah',
+        'tidak cepat', 'ga cepat', 'tidak puas', 'ga puas'
+    ]
+    
+    for phrase in negative_phrases:
+        if phrase in context_lower:
+            neg_score += 5
+            # Remove the phrase words from consideration to avoid double counting
+            for word in phrase.split():
+                if word in words:
+                    words.remove(word)
     
     for i, word in enumerate(words):
         # Check if current word is negation
@@ -76,38 +94,47 @@ def get_sentiment_rule_based(context):
             # Check next word
             if i + 1 < len(words):
                 next_word = words[i + 1]
-                if next_word in POSITIVE_WORDS:
+                # Check if next word is positive
+                is_positive = False
+                is_negative = False
+                
+                for pw in POSITIVE_WORDS:
+                    if pw in next_word:
+                        is_positive = True
+                        break
+                for nw in NEGATIVE_WORDS:
+                    if nw in next_word:
+                        is_negative = True
+                        break
+                
+                if is_positive:
                     neg_score += 3  # "tidak enak" -> negative
-                    pos_score -= 1
-                elif next_word in NEGATIVE_WORDS:
+                elif is_negative:
                     pos_score += 3  # "tidak lambat" -> positive
-                    neg_score -= 1
-            continue
-        
-        # Check for negative phrases
-        if 'tidak enak' in context_lower or 'ga enak' in context_lower or 'gak enak' in context_lower:
-            neg_score += 5
-            continue
-        
-        if 'tidak enak' in context_lower or 'ga enak' in context_lower or 'gak enak' in context_lower:
-            neg_score += 5
             continue
         
         # Check individual words
-        if word in POSITIVE_WORDS:
-            pos_score += 1
-        if word in NEGATIVE_WORDS:
-            neg_score += 1
+        for pw in POSITIVE_WORDS:
+            if pw in word:
+                pos_score += 1
+                break
+        for nw in NEGATIVE_WORDS:
+            if nw in word:
+                neg_score += 1
+                break
     
-    # Special cases for common phrases
-    if 'tidak enak' in context_lower or 'ga enak' in context_lower:
-        neg_score += 5
-    if 'sangat enak' in context_lower or 'enak sekali' in context_lower:
-        pos_score += 5
-    if 'sangat lambat' in context_lower or 'lambat sekali' in context_lower:
-        neg_score += 5
-    if 'sangat cepat' in context_lower or 'cepat sekali' in context_lower:
-        pos_score += 5
+    # Special cases for ambience
+    if 'nyaman' in context_lower:
+        if 'tidak' in context_lower or 'ga' in context_lower or 'gak' in context_lower:
+            neg_score += 5
+        else:
+            pos_score += 5
+    
+    if 'bersih' in context_lower:
+        if 'tidak' in context_lower or 'ga' in context_lower or 'gak' in context_lower:
+            neg_score += 5
+        else:
+            pos_score += 5
     
     # Determine sentiment
     if pos_score > neg_score:
@@ -203,21 +230,40 @@ def sentence2features(words):
 # ===============================
 
 def predict_ner(review):
+    """Predict NER with better error handling"""
     try:
         review = preprocess(review)
         words = tokenize(review)
         
-        if not words or ner_model is None:
+        # If no words, return empty lists
+        if not words:
+            return [], []
+        
+        # If model is not available, return O tags for all words
+        if ner_model is None:
             return words, ["O"] * len(words)
-            
+        
+        # Extract features
         features = sentence2features(words)
         if not features:
             return words, ["O"] * len(words)
+        
+        # Predict
+        try:
+            tags = ner_model.predict([features])[0]
+            # Ensure tags length matches words length
+            if len(tags) != len(words):
+                return words, ["O"] * len(words)
+            return words, tags
+        except Exception as e:
+            st.warning(f"NER prediction error: {str(e)}")
+            return words, ["O"] * len(words)
             
-        tags = ner_model.predict([features])[0]
-        return words, tags
-    except:
-        return [], []
+    except Exception as e:
+        st.warning(f"NER error: {str(e)}")
+        # Return words with O tags as fallback
+        words = tokenize(preprocess(review))
+        return words, ["O"] * len(words) if words else [], []
 
 def extract_aspects(words, tags):
     aspects = []
@@ -225,6 +271,9 @@ def extract_aspects(words, tags):
     label = None
     
     try:
+        if not words or not tags or len(words) != len(tags):
+            return []
+            
         for word, tag in zip(words, tags):
             if tag.startswith("B-"):
                 if current:
@@ -259,12 +308,45 @@ def predict_review(review):
     try:
         words, tags = predict_ner(review)
         
+        # If no words, return empty dataframe
         if not words:
             return pd.DataFrame()
             
         aspects = extract_aspects(words, tags)
-        hasil = []
         
+        # If no aspects, try to extract using simple rules
+        if not aspects:
+            # Try to find common aspect keywords
+            review_lower = review.lower()
+            if any(word in review_lower for word in ['makanan', 'makan', 'rasa', 'enak']):
+                # Use entire review as food aspect
+                aspects.append({
+                    "aspect": "FOOD",
+                    "context": review
+                })
+            elif any(word in review_lower for word in ['pelayanan', 'service', 'ramah', 'cepat']):
+                aspects.append({
+                    "aspect": "SERVICE",
+                    "context": review
+                })
+            elif any(word in review_lower for word in ['tempat', 'suasana', 'nyaman', 'bersih']):
+                aspects.append({
+                    "aspect": "AMBIENCE",
+                    "context": review
+                })
+            elif any(word in review_lower for word in ['harga', 'mahal', 'murah']):
+                aspects.append({
+                    "aspect": "PRICE",
+                    "context": review
+                })
+            else:
+                # Fallback: use entire review as miscellaneous
+                aspects.append({
+                    "aspect": "MISCELLANEOUS",
+                    "context": review
+                })
+        
+        hasil = []
         for item in aspects:
             sentiment = predict_sentiment_hybrid(item["context"])
             hasil.append({
@@ -284,21 +366,65 @@ def predict_review(review):
 
 def color_sentiment(val):
     """Color sentiment values for dataframe"""
-    if val.lower() == 'positive':
+    if val is None:
+        return ''
+    val_str = str(val)
+    if 'Positive' in val_str or 'positive' in val_str:
         return 'background-color: #d4edda; color: #155724; font-weight: bold;'
-    elif val.lower() == 'negative':
+    elif 'Negative' in val_str or 'negative' in val_str:
         return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
     else:
         return 'background-color: #e2e3e5; color: #383d41; font-weight: bold;'
 
 def get_sentiment_emoji(sentiment):
     """Get emoji for sentiment"""
-    if sentiment.lower() == 'positive':
+    if sentiment is None:
+        return '⚪'
+    sent_str = str(sentiment).lower()
+    if 'positive' in sent_str:
         return '🟢'
-    elif sentiment.lower() == 'negative':
+    elif 'negative' in sent_str:
         return '🔴'
     else:
         return '⚪'
+
+def display_ner_tokens(words, tags):
+    """Display NER tokens with colors - with safe fallback"""
+    try:
+        if not words or not tags or len(words) != len(tags):
+            return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Tidak ada token untuk divisualisasikan</div>'
+        
+        tag_colors = {
+            'B-FOOD': '#fce4ec', 'I-FOOD': '#f8bbd0',
+            'B-SERVICE': '#e3f2fd', 'I-SERVICE': '#bbdefb',
+            'B-AMBIENCE': '#e8f5e9', 'I-AMBIENCE': '#c8e6c9',
+            'B-PRICE': '#fff3e0', 'I-PRICE': '#ffe0b2',
+            'B-MISCELLANEOUS': '#f3e5f5', 'I-MISCELLANEOUS': '#e1bee7',
+            'O': '#f5f5f5'
+        }
+        
+        token_html = '<div style="display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0;">'
+        for word, tag in zip(words, tags):
+            color = tag_colors.get(tag, '#f5f5f5')
+            tag_display = tag if tag != 'O' else ''
+            
+            token_html += f'''
+            <span style="
+                background: {color};
+                padding: 0.2rem 0.5rem;
+                border-radius: 5px;
+                font-size: 0.9rem;
+                border: 1px solid #ddd;
+                display: inline-block;
+            ">
+                {word}
+                <span style="font-size: 0.6rem; color: #666; margin-left: 0.2rem;">{tag_display}</span>
+            </span>
+            '''
+        token_html += '</div>'
+        return token_html
+    except:
+        return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Error visualizing NER tokens</div>'
 
 # ===============================
 # UI - Main
@@ -347,6 +473,7 @@ with st.sidebar:
         [
             "pelayanan lambat",
             "makanannya tidak enak",
+            "tempatnya tidak nyaman",
             "makanan enak pelayanan ramah",
             "harga mahal tempat nyaman",
             "pelayanan cepat makanan enak"
@@ -410,7 +537,7 @@ if analyze_button:
                 with col_total:
                     st.metric("📊 Total Aspek", total)
                 
-                # Results table - FIXED applymap -> map
+                # Results table
                 st.subheader("📋 Hasil Analisis per Aspek")
                 
                 # Create a copy for display
@@ -419,7 +546,7 @@ if analyze_button:
                     lambda x: f"{get_sentiment_emoji(x)} {x}"
                 )
                 
-                # Apply styling using map (not applymap)
+                # Apply styling using map
                 styled_df = display_df.style.map(
                     color_sentiment, 
                     subset=['Sentiment']
@@ -437,46 +564,20 @@ if analyze_button:
                     }
                 )
                 
-                # NER Visualization
+                # NER Visualization - FIXED with safe function
                 st.divider()
                 st.subheader("🏷️ Named Entity Recognition (NER)")
                 
                 words, tags = predict_ner(review)
                 
-                if words and tags:
-                    tag_colors = {
-                        'B-FOOD': '#fce4ec', 'I-FOOD': '#f8bbd0',
-                        'B-SERVICE': '#e3f2fd', 'I-SERVICE': '#bbdefb',
-                        'B-AMBIENCE': '#e8f5e9', 'I-AMBIENCE': '#c8e6c9',
-                        'B-PRICE': '#fff3e0', 'I-PRICE': '#ffe0b2',
-                        'B-MISCELLANEOUS': '#f3e5f5', 'I-MISCELLANEOUS': '#e1bee7',
-                        'O': '#f5f5f5'
-                    }
-                    
-                    token_html = '<div style="display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0;">'
-                    for word, tag in zip(words, tags):
-                        color = tag_colors.get(tag, '#f5f5f5')
-                        tag_display = tag if tag != 'O' else ''
-                        
-                        token_html += f'''
-                        <span style="
-                            background: {color};
-                            padding: 0.2rem 0.5rem;
-                            border-radius: 5px;
-                            font-size: 0.9rem;
-                            border: 1px solid #ddd;
-                            display: inline-block;
-                        ">
-                            {word}
-                            <span style="font-size: 0.6rem; color: #666; margin-left: 0.2rem;">{tag_display}</span>
-                        </span>
-                        '''
-                    token_html += '</div>'
-                    st.markdown(token_html, unsafe_allow_html=True)
-                    
+                # Use safe display function
+                ner_html = display_ner_tokens(words, tags)
+                st.markdown(ner_html, unsafe_allow_html=True)
+                
+                if words and tags and len(words) == len(tags):
                     st.caption("🎨 **Legend:** B-FOOD/I-FOOD 🍔 | B-SERVICE/I-SERVICE 🛎️ | B-AMBIENCE/I-AMBIENCE 🏠 | B-PRICE/I-PRICE 💰 | B-MISCELLANEOUS/I-MISCELLANEOUS 📌")
                 else:
-                    st.info("Tidak ada token yang dapat divisualisasikan")
+                    st.caption("⚠️ Tidak ada token NER yang valid untuk divisualisasikan")
                 
                 # Download
                 st.divider()
