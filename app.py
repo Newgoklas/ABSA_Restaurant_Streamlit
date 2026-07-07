@@ -3,6 +3,7 @@ import pandas as pd
 import joblib
 import re
 from datetime import datetime
+import plotly.graph_objects as go
 
 # ===============================
 # Konfigurasi Halaman
@@ -15,7 +16,7 @@ st.set_page_config(
 )
 
 # ===============================
-# Initialize Session State for History
+# Initialize Session State
 # ===============================
 
 if 'history' not in st.session_state:
@@ -244,7 +245,6 @@ def predict_ner(review):
         
         tags = ner_model.predict([features])[0]
         
-        # Ensure tags is a list and length matches
         if not isinstance(tags, list):
             tags = list(tags)
         
@@ -254,7 +254,6 @@ def predict_ner(review):
         return words, tags
         
     except Exception as e:
-        # Fallback: return words with O tags
         words = tokenize(preprocess(review))
         return words, ["O"] * len(words) if words else [], []
 
@@ -302,7 +301,6 @@ def extract_aspects_fallback(review):
     review_lower = review.lower()
     aspects = []
     
-    # Check for food-related keywords
     food_keywords = ['makanan', 'makan', 'rasa', 'enak', 'lezat', 'hambar', 'basi']
     if any(word in review_lower for word in food_keywords):
         aspects.append({
@@ -310,7 +308,6 @@ def extract_aspects_fallback(review):
             "context": review
         })
     
-    # Check for service-related keywords
     service_keywords = ['pelayanan', 'service', 'ramah', 'cepat', 'lambat', 'staff']
     if any(word in review_lower for word in service_keywords):
         aspects.append({
@@ -318,7 +315,6 @@ def extract_aspects_fallback(review):
             "context": review
         })
     
-    # Check for ambience-related keywords
     ambience_keywords = ['tempat', 'suasana', 'nyaman', 'bersih', 'kotor', 'dekorasi']
     if any(word in review_lower for word in ambience_keywords):
         aspects.append({
@@ -326,7 +322,6 @@ def extract_aspects_fallback(review):
             "context": review
         })
     
-    # Check for price-related keywords
     price_keywords = ['harga', 'mahal', 'murah', 'worth', 'terjangkau']
     if any(word in review_lower for word in price_keywords):
         aspects.append({
@@ -334,7 +329,6 @@ def extract_aspects_fallback(review):
             "context": review
         })
     
-    # If no aspects found, use entire review as miscellaneous
     if not aspects:
         aspects.append({
             "aspect": "MISCELLANEOUS",
@@ -347,14 +341,11 @@ def predict_review(review):
     try:
         words, tags = predict_ner(review)
         
-        # If no words, return empty dataframe
         if not words:
             return pd.DataFrame()
         
-        # Try to extract aspects from NER
         aspects = extract_aspects(words, tags)
         
-        # If NER fails to extract aspects, use fallback
         if not aspects:
             aspects = extract_aspects_fallback(review)
         
@@ -373,7 +364,7 @@ def predict_review(review):
         return pd.DataFrame()
 
 # ===============================
-# UI Functions
+# UI Functions - Enhanced NER Display
 # ===============================
 
 def color_sentiment(val):
@@ -398,54 +389,123 @@ def get_sentiment_emoji(sentiment):
     else:
         return '⚪'
 
-def display_ner_tokens(words, tags):
-    """Display NER tokens with colors - safe version"""
+def display_ner_tokens_enhanced(words, tags):
+    """
+    Enhanced NER visualization with better styling
+    """
     try:
-        # Validate inputs
         if not words:
-            return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Tidak ada kata untuk divisualisasikan</div>'
+            return """
+            <div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">
+                Tidak ada kata untuk divisualisasikan
+            </div>
+            """
         
         if not tags:
-            return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Tidak ada tag NER yang tersedia</div>'
+            return """
+            <div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">
+                Tidak ada tag NER yang tersedia
+            </div>
+            """
         
-        # Ensure tags is a list
         if not isinstance(tags, list):
             tags = list(tags)
         
         if len(words) != len(tags):
-            return f'<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Jumlah kata ({len(words)}) tidak sama dengan jumlah tag ({len(tags)})</div>'
+            return f"""
+            <div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">
+                Jumlah kata ({len(words)}) tidak sama dengan jumlah tag ({len(tags)})
+            </div>
+            """
         
-        tag_colors = {
-            'B-FOOD': '#fce4ec', 'I-FOOD': '#f8bbd0',
-            'B-SERVICE': '#e3f2fd', 'I-SERVICE': '#bbdefb',
-            'B-AMBIENCE': '#e8f5e9', 'I-AMBIENCE': '#c8e6c9',
-            'B-PRICE': '#fff3e0', 'I-PRICE': '#ffe0b2',
-            'B-MISCELLANEOUS': '#f3e5f5', 'I-MISCELLANEOUS': '#e1bee7',
-            'O': '#f5f5f5'
+        # Tag color mapping with better colors
+        tag_config = {
+            'B-FOOD': {'color': '#fce4ec', 'border': '#e57373', 'label': 'Food'},
+            'I-FOOD': {'color': '#f8bbd0', 'border': '#f06292', 'label': 'Food'},
+            'B-SERVICE': {'color': '#e3f2fd', 'border': '#64b5f6', 'label': 'Service'},
+            'I-SERVICE': {'color': '#bbdefb', 'border': '#42a5f5', 'label': 'Service'},
+            'B-AMBIENCE': {'color': '#e8f5e9', 'border': '#81c784', 'label': 'Ambience'},
+            'I-AMBIENCE': {'color': '#c8e6c9', 'border': '#66bb6a', 'label': 'Ambience'},
+            'B-PRICE': {'color': '#fff3e0', 'border': '#ffb74d', 'label': 'Price'},
+            'I-PRICE': {'color': '#ffe0b2', 'border': '#ffa726', 'label': 'Price'},
+            'B-MISCELLANEOUS': {'color': '#f3e5f5', 'border': '#ce93d8', 'label': 'Misc'},
+            'I-MISCELLANEOUS': {'color': '#e1bee7', 'border': '#ab47bc', 'label': 'Misc'},
+            'O': {'color': '#f5f5f5', 'border': '#bdbdbd', 'label': 'Other'}
         }
         
-        token_html = '<div style="display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0;">'
+        token_html = """
+        <div style="
+            display: flex; 
+            flex-wrap: wrap; 
+            gap: 0.5rem; 
+            padding: 1.5rem; 
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px; 
+            border: 2px solid #e0e0e0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        ">
+        """
+        
         for word, tag in zip(words, tags):
-            color = tag_colors.get(tag, '#f5f5f5')
-            tag_display = tag if tag != 'O' else ''
+            config = tag_config.get(tag, tag_config['O'])
+            tag_display = config['label'] if tag != 'O' else ''
             
-            token_html += f'''
+            token_html += f"""
             <span style="
-                background: {color};
-                padding: 0.2rem 0.5rem;
-                border-radius: 5px;
-                font-size: 0.9rem;
-                border: 1px solid #ddd;
+                background: {config['color']};
+                padding: 0.4rem 0.8rem;
+                border-radius: 8px;
+                font-size: 1rem;
+                font-weight: 500;
+                border: 2px solid {config['border']};
                 display: inline-block;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                transition: all 0.3s ease;
             ">
                 {word}
-                <span style="font-size: 0.6rem; color: #666; margin-left: 0.2rem;">{tag_display}</span>
+                <span style="
+                    font-size: 0.65rem;
+                    color: #666;
+                    margin-left: 0.4rem;
+                    background: rgba(255,255,255,0.7);
+                    padding: 0.1rem 0.4rem;
+                    border-radius: 10px;
+                    font-weight: 600;
+                ">{tag_display}</span>
             </span>
-            '''
+            """
         token_html += '</div>'
         return token_html
+        
     except Exception as e:
-        return f'<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Error visualizing NER tokens: {str(e)}</div>'
+        return f"""
+        <div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">
+            Error visualizing NER tokens: {str(e)}
+        </div>
+        """
+
+def display_ner_legend():
+    """Display legend for NER tags"""
+    legend_html = """
+    <div style="
+        display: flex; 
+        flex-wrap: wrap; 
+        gap: 0.5rem; 
+        padding: 0.5rem;
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        margin-top: 0.5rem;
+    ">
+        <span style="background: #fce4ec; padding: 0.2rem 0.6rem; border-radius: 4px; border: 2px solid #e57373; font-size: 0.8rem;">🍔 Food</span>
+        <span style="background: #e3f2fd; padding: 0.2rem 0.6rem; border-radius: 4px; border: 2px solid #64b5f6; font-size: 0.8rem;">🛎️ Service</span>
+        <span style="background: #e8f5e9; padding: 0.2rem 0.6rem; border-radius: 4px; border: 2px solid #81c784; font-size: 0.8rem;">🏠 Ambience</span>
+        <span style="background: #fff3e0; padding: 0.2rem 0.6rem; border-radius: 4px; border: 2px solid #ffb74d; font-size: 0.8rem;">💰 Price</span>
+        <span style="background: #f3e5f5; padding: 0.2rem 0.6rem; border-radius: 4px; border: 2px solid #ce93d8; font-size: 0.8rem;">📌 Misc</span>
+        <span style="background: #f5f5f5; padding: 0.2rem 0.6rem; border-radius: 4px; border: 2px solid #bdbdbd; font-size: 0.8rem;">⚪ Other</span>
+    </div>
+    """
+    return legend_html
 
 # ===============================
 # UI - Main
@@ -456,7 +516,7 @@ st.markdown("Analisis Sentimen Review Restoran Berbasis Aspek")
 st.divider()
 
 # ===============================
-# Sidebar with History
+# Sidebar
 # ===============================
 
 with st.sidebar:
@@ -515,12 +575,10 @@ with st.sidebar:
     if st.session_state.history:
         st.caption(f"Total: {len(st.session_state.history)} analisis")
         
-        # Clear history button
         if st.button("🗑️ Hapus Riwayat", use_container_width=True):
             st.session_state.history = []
             st.rerun()
         
-        # Display history in reverse order (newest first)
         for i, entry in enumerate(reversed(st.session_state.history[-10:])):
             with st.expander(f"#{len(st.session_state.history) - i}: {entry['review'][:50]}..."):
                 st.write(f"**Review:** {entry['review']}")
@@ -594,19 +652,16 @@ if analyze_button:
                 # Results table
                 st.subheader("📋 Hasil Analisis per Aspek")
                 
-                # Create a copy for display
                 display_df = hasil.copy()
                 display_df['Sentiment'] = display_df['Sentiment'].apply(
                     lambda x: f"{get_sentiment_emoji(x)} {x}"
                 )
                 
-                # Apply styling using map
                 styled_df = display_df.style.map(
                     color_sentiment, 
                     subset=['Sentiment']
                 )
                 
-                # Display styled dataframe
                 st.dataframe(
                     styled_df,
                     use_container_width=True,
@@ -618,19 +673,19 @@ if analyze_button:
                     }
                 )
                 
-                # NER Visualization
+                # Enhanced NER Visualization
                 st.divider()
                 st.subheader("🏷️ Named Entity Recognition (NER)")
                 
                 words, tags = predict_ner(review)
                 
-                # Display NER tokens using safe function
-                ner_html = display_ner_tokens(words, tags)
+                # Display enhanced NER tokens
+                ner_html = display_ner_tokens_enhanced(words, tags)
                 st.markdown(ner_html, unsafe_allow_html=True)
                 
-                # Show legend only if we have valid tokens
+                # Display legend
                 if words and tags and len(words) == len(tags):
-                    st.caption("🎨 **Legend:** B-FOOD/I-FOOD 🍔 | B-SERVICE/I-SERVICE 🛎️ | B-AMBIENCE/I-AMBIENCE 🏠 | B-PRICE/I-PRICE 💰 | B-MISCELLANEOUS/I-MISCELLANEOUS 📌")
+                    st.markdown(display_ner_legend(), unsafe_allow_html=True)
                 
                 # Save to history
                 history_entry = {
