@@ -15,6 +15,16 @@ st.set_page_config(
 )
 
 # ===============================
+# Initialize Session State for History
+# ===============================
+
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+if 'contoh' not in st.session_state:
+    st.session_state.contoh = ""
+
+# ===============================
 # Load Model
 # ===============================
 
@@ -90,20 +100,16 @@ def get_sentiment_rule_based(context):
     
     # Check individual words
     words = context_lower.split()
-    negation_found = False
     
     for i, word in enumerate(words):
         # Check negation
         if word in ['tidak', 'ga', 'gak', 'kurang', 'bukan', 'belum']:
-            negation_found = True
             if i + 1 < len(words):
                 next_word = words[i + 1]
-                # Check if next word is positive -> makes it negative
                 for pw in POSITIVE_WORDS:
                     if pw in next_word:
                         neg_score += 3
                         break
-                # Check if next word is negative -> makes it positive
                 for nw in NEGATIVE_WORDS:
                     if nw in next_word:
                         pos_score += 3
@@ -238,7 +244,10 @@ def predict_ner(review):
         
         tags = ner_model.predict([features])[0]
         
-        # Ensure tags length matches words length
+        # Ensure tags is a list and length matches
+        if not isinstance(tags, list):
+            tags = list(tags)
+        
         if len(tags) != len(words):
             return words, ["O"] * len(words)
             
@@ -399,6 +408,10 @@ def display_ner_tokens(words, tags):
         if not tags:
             return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Tidak ada tag NER yang tersedia</div>'
         
+        # Ensure tags is a list
+        if not isinstance(tags, list):
+            tags = list(tags)
+        
         if len(words) != len(tags):
             return f'<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Jumlah kata ({len(words)}) tidak sama dengan jumlah tag ({len(tags)})</div>'
         
@@ -442,7 +455,10 @@ st.title("🍽️ Aspect Based Sentiment Analysis")
 st.markdown("Analisis Sentimen Review Restoran Berbasis Aspek")
 st.divider()
 
-# Sidebar
+# ===============================
+# Sidebar with History
+# ===============================
+
 with st.sidebar:
     st.header("📊 Tentang Aplikasi")
     st.markdown("""
@@ -489,15 +505,41 @@ with st.sidebar:
         ]
     )
     if st.button("📋 Gunakan Contoh", use_container_width=True):
-        st.session_state['contoh'] = contoh
+        st.session_state.contoh = contoh
+    
+    st.divider()
+    
+    # History Section
+    st.subheader("📜 Riwayat Analisis")
+    
+    if st.session_state.history:
+        st.caption(f"Total: {len(st.session_state.history)} analisis")
+        
+        # Clear history button
+        if st.button("🗑️ Hapus Riwayat", use_container_width=True):
+            st.session_state.history = []
+            st.rerun()
+        
+        # Display history in reverse order (newest first)
+        for i, entry in enumerate(reversed(st.session_state.history[-10:])):
+            with st.expander(f"#{len(st.session_state.history) - i}: {entry['review'][:50]}..."):
+                st.write(f"**Review:** {entry['review']}")
+                st.write(f"**Waktu:** {entry['timestamp']}")
+                st.write("**Hasil:**")
+                st.dataframe(entry['result'], use_container_width=True, height=150)
+    else:
+        st.info("Belum ada riwayat analisis")
 
-# Main content
+# ===============================
+# Main Content
+# ===============================
+
 col1, col2 = st.columns([3, 1])
 
 with col1:
     st.subheader("✍️ Masukkan Review")
     
-    default_text = st.session_state.get('contoh', '')
+    default_text = st.session_state.contoh
     
     review = st.text_area(
         "Review Restoran",
@@ -512,7 +554,10 @@ with col2:
     analyze_button = st.button("🔍 Analisis Sekarang", use_container_width=True, type="primary")
     st.caption("Klik tombol untuk menganalisis review")
 
+# ===============================
 # Results
+# ===============================
+
 if analyze_button:
     if not review or review.strip() == "":
         st.warning("⚠️ Masukkan review terlebih dahulu!")
@@ -573,7 +618,7 @@ if analyze_button:
                     }
                 )
                 
-                # NER Visualization - FIXED
+                # NER Visualization
                 st.divider()
                 st.subheader("🏷️ Named Entity Recognition (NER)")
                 
@@ -586,6 +631,14 @@ if analyze_button:
                 # Show legend only if we have valid tokens
                 if words and tags and len(words) == len(tags):
                     st.caption("🎨 **Legend:** B-FOOD/I-FOOD 🍔 | B-SERVICE/I-SERVICE 🛎️ | B-AMBIENCE/I-AMBIENCE 🏠 | B-PRICE/I-PRICE 💰 | B-MISCELLANEOUS/I-MISCELLANEOUS 📌")
+                
+                # Save to history
+                history_entry = {
+                    "review": review,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "result": hasil.copy()
+                }
+                st.session_state.history.append(history_entry)
                 
                 # Download
                 st.divider()
