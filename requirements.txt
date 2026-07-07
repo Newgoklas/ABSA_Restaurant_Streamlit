@@ -1,5 +1,6 @@
 streamlit
 pandas
-joblib
+numpy
 scikit-learn
 sklearn-crfsuite
+joblib
