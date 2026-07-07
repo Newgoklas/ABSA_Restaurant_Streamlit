@@ -25,7 +25,6 @@ def load_models():
         ner_model = joblib.load("ner_model.pkl")
         return absa_model, ner_model
     except Exception as e:
-        st.error(f"Error loading models: {str(e)}")
         return None, None
 
 absa_model, ner_model = load_models()
@@ -36,7 +35,7 @@ else:
     st.success("✅ Model berhasil dimuat!")
 
 # ===============================
-# Rule-Based Sentiment Fallback
+# Rule-Based Sentiment
 # ===============================
 
 POSITIVE_WORDS = {
@@ -61,80 +60,74 @@ NEGATIVE_WORDS = {
 }
 
 def get_sentiment_rule_based(context):
-    """Rule-based sentiment classification as fallback"""
+    """Rule-based sentiment classification"""
     context_lower = context.lower()
-    words = context_lower.split()
     
     pos_score = 0
     neg_score = 0
     
-    # Check for negation patterns first
-    negation_words = {'tidak', 'ga', 'gak', 'kurang', 'bukan', 'belum'}
-    negation_found = False
-    
-    # Special cases for common negative phrases
+    # Check negative phrases first
     negative_phrases = [
         'tidak enak', 'ga enak', 'gak enak', 'tidak nyaman', 'ga nyaman', 'gak nyaman',
         'tidak bersih', 'ga bersih', 'tidak ramah', 'ga ramah',
-        'tidak cepat', 'ga cepat', 'tidak puas', 'ga puas'
+        'tidak cepat', 'ga cepat', 'tidak puas', 'ga puas',
+        'tidak enak', 'kurang enak', 'tidak enak'
     ]
     
     for phrase in negative_phrases:
         if phrase in context_lower:
             neg_score += 5
-            # Remove the phrase words from consideration to avoid double counting
-            for word in phrase.split():
-                if word in words:
-                    words.remove(word)
+    
+    # Check positive phrases
+    positive_phrases = [
+        'sangat enak', 'enak sekali', 'enak banget', 'sangat nyaman',
+        'sangat baik', 'sangat memuaskan', 'sangat cepat'
+    ]
+    
+    for phrase in positive_phrases:
+        if phrase in context_lower:
+            pos_score += 5
+    
+    # Check individual words
+    words = context_lower.split()
+    negation_found = False
     
     for i, word in enumerate(words):
-        # Check if current word is negation
-        if word in negation_words:
+        # Check negation
+        if word in ['tidak', 'ga', 'gak', 'kurang', 'bukan', 'belum']:
             negation_found = True
-            # Check next word
             if i + 1 < len(words):
                 next_word = words[i + 1]
-                # Check if next word is positive
-                is_positive = False
-                is_negative = False
-                
+                # Check if next word is positive -> makes it negative
                 for pw in POSITIVE_WORDS:
                     if pw in next_word:
-                        is_positive = True
+                        neg_score += 3
                         break
+                # Check if next word is negative -> makes it positive
                 for nw in NEGATIVE_WORDS:
                     if nw in next_word:
-                        is_negative = True
+                        pos_score += 3
                         break
-                
-                if is_positive:
-                    neg_score += 3  # "tidak enak" -> negative
-                elif is_negative:
-                    pos_score += 3  # "tidak lambat" -> positive
             continue
         
-        # Check individual words
+        # Check positive words
         for pw in POSITIVE_WORDS:
             if pw in word:
                 pos_score += 1
                 break
+        
+        # Check negative words
         for nw in NEGATIVE_WORDS:
             if nw in word:
                 neg_score += 1
                 break
     
-    # Special cases for ambience
-    if 'nyaman' in context_lower:
-        if 'tidak' in context_lower or 'ga' in context_lower or 'gak' in context_lower:
-            neg_score += 5
-        else:
-            pos_score += 5
+    # Special cases
+    if 'nyaman' in context_lower and ('tidak' in context_lower or 'ga' in context_lower or 'gak' in context_lower):
+        neg_score += 5
     
-    if 'bersih' in context_lower:
-        if 'tidak' in context_lower or 'ga' in context_lower or 'gak' in context_lower:
-            neg_score += 5
-        else:
-            pos_score += 5
+    if 'enak' in context_lower and ('tidak' in context_lower or 'ga' in context_lower or 'gak' in context_lower):
+        neg_score += 5
     
     # Determine sentiment
     if pos_score > neg_score:
@@ -147,11 +140,9 @@ def get_sentiment_rule_based(context):
 def predict_sentiment_hybrid(context):
     """Hybrid prediction: model + rule-based"""
     try:
-        # Try model first if available
         if absa_model is not None:
             try:
                 pred = absa_model.predict([context])[0]
-                # If model returns neutral but context has strong signals
                 if pred == 'Neutral':
                     rule_pred = get_sentiment_rule_based(context)
                     if rule_pred != 'Neutral':
@@ -165,7 +156,7 @@ def predict_sentiment_hybrid(context):
         return get_sentiment_rule_based(context)
 
 # ===============================
-# Preprocessing Functions
+# Preprocessing
 # ===============================
 
 def preprocess(text):
@@ -230,38 +221,31 @@ def sentence2features(words):
 # ===============================
 
 def predict_ner(review):
-    """Predict NER with better error handling"""
+    """Predict NER with safe fallback"""
     try:
         review = preprocess(review)
         words = tokenize(review)
         
-        # If no words, return empty lists
         if not words:
             return [], []
         
-        # If model is not available, return O tags for all words
         if ner_model is None:
             return words, ["O"] * len(words)
         
-        # Extract features
         features = sentence2features(words)
         if not features:
             return words, ["O"] * len(words)
         
-        # Predict
-        try:
-            tags = ner_model.predict([features])[0]
-            # Ensure tags length matches words length
-            if len(tags) != len(words):
-                return words, ["O"] * len(words)
-            return words, tags
-        except Exception as e:
-            st.warning(f"NER prediction error: {str(e)}")
+        tags = ner_model.predict([features])[0]
+        
+        # Ensure tags length matches words length
+        if len(tags) != len(words):
             return words, ["O"] * len(words)
             
+        return words, tags
+        
     except Exception as e:
-        st.warning(f"NER error: {str(e)}")
-        # Return words with O tags as fallback
+        # Fallback: return words with O tags
         words = tokenize(preprocess(review))
         return words, ["O"] * len(words) if words else [], []
 
@@ -304,6 +288,52 @@ def extract_aspects(words, tags):
     except:
         return []
 
+def extract_aspects_fallback(review):
+    """Extract aspects using simple rules if NER fails"""
+    review_lower = review.lower()
+    aspects = []
+    
+    # Check for food-related keywords
+    food_keywords = ['makanan', 'makan', 'rasa', 'enak', 'lezat', 'hambar', 'basi']
+    if any(word in review_lower for word in food_keywords):
+        aspects.append({
+            "aspect": "FOOD",
+            "context": review
+        })
+    
+    # Check for service-related keywords
+    service_keywords = ['pelayanan', 'service', 'ramah', 'cepat', 'lambat', 'staff']
+    if any(word in review_lower for word in service_keywords):
+        aspects.append({
+            "aspect": "SERVICE",
+            "context": review
+        })
+    
+    # Check for ambience-related keywords
+    ambience_keywords = ['tempat', 'suasana', 'nyaman', 'bersih', 'kotor', 'dekorasi']
+    if any(word in review_lower for word in ambience_keywords):
+        aspects.append({
+            "aspect": "AMBIENCE",
+            "context": review
+        })
+    
+    # Check for price-related keywords
+    price_keywords = ['harga', 'mahal', 'murah', 'worth', 'terjangkau']
+    if any(word in review_lower for word in price_keywords):
+        aspects.append({
+            "aspect": "PRICE",
+            "context": review
+        })
+    
+    # If no aspects found, use entire review as miscellaneous
+    if not aspects:
+        aspects.append({
+            "aspect": "MISCELLANEOUS",
+            "context": review
+        })
+    
+    return aspects
+
 def predict_review(review):
     try:
         words, tags = predict_ner(review)
@@ -311,40 +341,13 @@ def predict_review(review):
         # If no words, return empty dataframe
         if not words:
             return pd.DataFrame()
-            
+        
+        # Try to extract aspects from NER
         aspects = extract_aspects(words, tags)
         
-        # If no aspects, try to extract using simple rules
+        # If NER fails to extract aspects, use fallback
         if not aspects:
-            # Try to find common aspect keywords
-            review_lower = review.lower()
-            if any(word in review_lower for word in ['makanan', 'makan', 'rasa', 'enak']):
-                # Use entire review as food aspect
-                aspects.append({
-                    "aspect": "FOOD",
-                    "context": review
-                })
-            elif any(word in review_lower for word in ['pelayanan', 'service', 'ramah', 'cepat']):
-                aspects.append({
-                    "aspect": "SERVICE",
-                    "context": review
-                })
-            elif any(word in review_lower for word in ['tempat', 'suasana', 'nyaman', 'bersih']):
-                aspects.append({
-                    "aspect": "AMBIENCE",
-                    "context": review
-                })
-            elif any(word in review_lower for word in ['harga', 'mahal', 'murah']):
-                aspects.append({
-                    "aspect": "PRICE",
-                    "context": review
-                })
-            else:
-                # Fallback: use entire review as miscellaneous
-                aspects.append({
-                    "aspect": "MISCELLANEOUS",
-                    "context": review
-                })
+            aspects = extract_aspects_fallback(review)
         
         hasil = []
         for item in aspects:
@@ -365,7 +368,6 @@ def predict_review(review):
 # ===============================
 
 def color_sentiment(val):
-    """Color sentiment values for dataframe"""
     if val is None:
         return ''
     val_str = str(val)
@@ -377,7 +379,6 @@ def color_sentiment(val):
         return 'background-color: #e2e3e5; color: #383d41; font-weight: bold;'
 
 def get_sentiment_emoji(sentiment):
-    """Get emoji for sentiment"""
     if sentiment is None:
         return '⚪'
     sent_str = str(sentiment).lower()
@@ -389,10 +390,17 @@ def get_sentiment_emoji(sentiment):
         return '⚪'
 
 def display_ner_tokens(words, tags):
-    """Display NER tokens with colors - with safe fallback"""
+    """Display NER tokens with colors - safe version"""
     try:
-        if not words or not tags or len(words) != len(tags):
-            return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Tidak ada token untuk divisualisasikan</div>'
+        # Validate inputs
+        if not words:
+            return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Tidak ada kata untuk divisualisasikan</div>'
+        
+        if not tags:
+            return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Tidak ada tag NER yang tersedia</div>'
+        
+        if len(words) != len(tags):
+            return f'<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Jumlah kata ({len(words)}) tidak sama dengan jumlah tag ({len(tags)})</div>'
         
         tag_colors = {
             'B-FOOD': '#fce4ec', 'I-FOOD': '#f8bbd0',
@@ -423,8 +431,8 @@ def display_ner_tokens(words, tags):
             '''
         token_html += '</div>'
         return token_html
-    except:
-        return '<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Error visualizing NER tokens</div>'
+    except Exception as e:
+        return f'<div style="padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; color: #666;">Error visualizing NER tokens: {str(e)}</div>'
 
 # ===============================
 # UI - Main
@@ -474,6 +482,7 @@ with st.sidebar:
             "pelayanan lambat",
             "makanannya tidak enak",
             "tempatnya tidak nyaman",
+            "makanannya enak",
             "makanan enak pelayanan ramah",
             "harga mahal tempat nyaman",
             "pelayanan cepat makanan enak"
@@ -564,20 +573,19 @@ if analyze_button:
                     }
                 )
                 
-                # NER Visualization - FIXED with safe function
+                # NER Visualization - FIXED
                 st.divider()
                 st.subheader("🏷️ Named Entity Recognition (NER)")
                 
                 words, tags = predict_ner(review)
                 
-                # Use safe display function
+                # Display NER tokens using safe function
                 ner_html = display_ner_tokens(words, tags)
                 st.markdown(ner_html, unsafe_allow_html=True)
                 
+                # Show legend only if we have valid tokens
                 if words and tags and len(words) == len(tags):
                     st.caption("🎨 **Legend:** B-FOOD/I-FOOD 🍔 | B-SERVICE/I-SERVICE 🛎️ | B-AMBIENCE/I-AMBIENCE 🏠 | B-PRICE/I-PRICE 💰 | B-MISCELLANEOUS/I-MISCELLANEOUS 📌")
-                else:
-                    st.caption("⚠️ Tidak ada token NER yang valid untuk divisualisasikan")
                 
                 # Download
                 st.divider()
