@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import joblib
 import re
-import matplotlib.pyplot as plt
 from datetime import datetime
 
 # ===============================
@@ -54,12 +53,12 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
         border: 1px solid #f0f0f0;
         margin-bottom: 1.5rem;
+        transition: transform 0.2s;
     }
     
-    .card h3 {
-        color: #333;
-        font-weight: 600;
-        margin-bottom: 1rem;
+    .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
     }
     
     /* Sentiment badge styling */
@@ -161,6 +160,11 @@ st.markdown("""
         padding: 1rem;
         border-radius: 10px;
         margin: 0.5rem 0;
+        transition: transform 0.2s;
+    }
+    
+    .sentiment-box:hover {
+        transform: scale(1.05);
     }
     
     .sentiment-positive { background: #d4edda; border: 2px solid #28a745; }
@@ -168,13 +172,55 @@ st.markdown("""
     .sentiment-neutral { background: #e2e3e5; border: 2px solid #6c757d; }
     
     .sentiment-box .count {
-        font-size: 2rem;
+        font-size: 2.5rem;
         font-weight: 700;
     }
     
     .sentiment-box .label {
         font-size: 0.9rem;
         font-weight: 600;
+    }
+    
+    /* Metric boxes */
+    .metric-box {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 1rem;
+        text-align: center;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .metric-box .value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #667eea;
+    }
+    
+    .metric-box .label {
+        font-size: 0.8rem;
+        color: #666;
+    }
+    
+    /* NER token styling */
+    .ner-token {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 5px;
+        font-size: 0.9rem;
+        border: 1px solid #e0e0e0;
+        margin: 0.1rem;
+        transition: transform 0.2s;
+    }
+    
+    .ner-token:hover {
+        transform: scale(1.05);
+        z-index: 10;
+    }
+    
+    .ner-token .tag {
+        font-size: 0.6rem;
+        color: #666;
+        margin-left: 0.2rem;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -191,6 +237,7 @@ def load_models():
 
 try:
     absa_model, ner_model = load_models()
+    st.success("✅ Model berhasil dimuat!")
 except Exception as e:
     st.error(f"❌ Gagal memuat model: {e}")
     st.stop()
@@ -428,7 +475,7 @@ if analyze_button:
                         
                         st.markdown(f"""
                         <div class="card">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                                 <div>
                                     <span class="aspect-tag {aspect_class}">{aspect_display}</span>
                                     <span style="margin-left: 0.5rem; font-weight: 500;">"{context}"</span>
@@ -479,30 +526,42 @@ if analyze_button:
                         """, unsafe_allow_html=True)
                     
                     # Total aspects
-                    st.markdown(f"**Total Aspek**: {total}")
+                    st.markdown("---")
                     
-                    # Create bar chart using matplotlib
-                    if len(sentiment_counts) > 0:
-                        fig, ax = plt.subplots(figsize=(6, 3))
-                        
-                        colors = []
-                        for s in sentiment_counts.index:
-                            if s.lower() == 'positive':
-                                colors.append('#28a745')
-                            elif s.lower() == 'negative':
-                                colors.append('#dc3545')
-                            else:
-                                colors.append('#6c757d')
-                        
-                        ax.bar(sentiment_counts.index, sentiment_counts.values, color=colors, edgecolor='white', linewidth=2)
-                        ax.set_ylabel('Jumlah')
-                        ax.set_title('Distribusi Sentimen')
-                        
-                        # Add value labels on top of bars
-                        for i, v in enumerate(sentiment_counts.values):
-                            ax.text(i, v + 0.1, str(v), ha='center', va='bottom', fontweight='bold')
-                        
-                        st.pyplot(fig)
+                    # Metrics
+                    col_metric1, col_metric2, col_metric3 = st.columns(3)
+                    
+                    with col_metric1:
+                        st.markdown(f"""
+                        <div class="metric-box">
+                            <div class="value">{total}</div>
+                            <div class="label">Total Aspek</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col_metric2:
+                        if pos_count > 0:
+                            pos_pct = round((pos_count / total) * 100)
+                        else:
+                            pos_pct = 0
+                        st.markdown(f"""
+                        <div class="metric-box">
+                            <div class="value" style="color: #28a745;">{pos_pct}%</div>
+                            <div class="label">Positif</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col_metric3:
+                        if neg_count > 0:
+                            neg_pct = round((neg_count / total) * 100)
+                        else:
+                            neg_pct = 0
+                        st.markdown(f"""
+                        <div class="metric-box">
+                            <div class="value" style="color: #dc3545;">{neg_pct}%</div>
+                            <div class="label">Negatif</div>
+                        </div>
+                        """, unsafe_allow_html=True)
                 
                 # Display NER visualization
                 st.markdown("---")
@@ -530,33 +589,51 @@ if analyze_button:
                     tag_display = tag if tag != 'O' else ''
                     
                     ner_html += f'''
-                    <span style="
-                        background: {tag_color};
-                        padding: 0.2rem 0.5rem;
-                        border-radius: 5px;
-                        font-size: 0.9rem;
-                        border: 1px solid #e0e0e0;
-                    ">
+                    <span class="ner-token" style="background: {tag_color};">
                         {word}
-                        <span style="
-                            font-size: 0.6rem;
-                            color: #666;
-                            margin-left: 0.2rem;
-                        ">{tag_display}</span>
+                        <span class="tag">{tag_display}</span>
                     </span>
                     '''
                 ner_html += '</div>'
                 st.markdown(ner_html, unsafe_allow_html=True)
                 
+                # Legend for NER tags
+                st.markdown("#### 🎨 Legend")
+                legend_cols = st.columns(5)
+                tag_legend = {
+                    'B-FOOD': '🍔 Food',
+                    'B-SERVICE': '🛎️ Service',
+                    'B-AMBIENCE': '🏠 Ambience',
+                    'B-PRICE': '💰 Price',
+                    'B-MISCELLANEOUS': '📌 Misc'
+                }
+                for i, (tag, label) in enumerate(tag_legend.items()):
+                    with legend_cols[i % 5]:
+                        tag_color = {
+                            'B-FOOD': '#fce4ec',
+                            'B-SERVICE': '#e3f2fd',
+                            'B-AMBIENCE': '#e8f5e9',
+                            'B-PRICE': '#fff3e0',
+                            'B-MISCELLANEOUS': '#f3e5f5'
+                        }.get(tag, '#f5f5f5')
+                        st.markdown(f"""
+                        <span style="background: {tag_color}; padding: 0.2rem 0.5rem; border-radius: 5px; font-size: 0.8rem;">
+                            {label}
+                        </span>
+                        """, unsafe_allow_html=True)
+                
                 # Download results
                 st.markdown("---")
-                csv = hasil.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Download Hasil (CSV)",
-                    data=csv,
-                    file_name=f"absa_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
+                col_download1, col_download2, col_download3 = st.columns([1, 2, 1])
+                with col_download2:
+                    csv = hasil.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Hasil (CSV)",
+                        data=csv,
+                        file_name=f"absa_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
                 
             else:
                 st.info("ℹ️ Tidak ditemukan aspek yang dapat dianalisis dalam review.")
