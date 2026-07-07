@@ -3,5 +3,3 @@ pandas
 joblib
 scikit-learn
 sklearn-crfsuite
-matplotlib
-numpy
