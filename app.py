@@ -32,17 +32,14 @@ if 'contoh' not in st.session_state:
 def load_models():
     try:
         absa_model = joblib.load("absa_model.pkl")
-        ner_model = joblib.load("ner_model.pkl")
-        return absa_model, ner_model
+        return absa_model
     except Exception as e:
-        return None, None
+        return None
 
-absa_model, ner_model = load_models()
+absa_model = load_models()
 
-if absa_model is None or ner_model is None:
-    st.warning("⚠️ Model tidak ditemukan. Gunakan rule-based sentiment analysis.")
-else:
-    st.success("✅ Model berhasil dimuat!")
+if absa_model is None:
+    st.warning("⚠️ Model ABSA tidak ditemukan. Gunakan rule-based sentiment analysis.")
 
 # ===============================
 # Rule-Based Sentiment
@@ -80,8 +77,7 @@ def get_sentiment_rule_based(context):
     negative_phrases = [
         'tidak enak', 'ga enak', 'gak enak', 'tidak nyaman', 'ga nyaman', 'gak nyaman',
         'tidak bersih', 'ga bersih', 'tidak ramah', 'ga ramah',
-        'tidak cepat', 'ga cepat', 'tidak puas', 'ga puas',
-        'tidak enak', 'kurang enak', 'tidak enak'
+        'tidak cepat', 'ga cepat', 'tidak puas', 'ga puas'
     ]
     
     for phrase in negative_phrases:
@@ -143,191 +139,50 @@ def get_sentiment_rule_based(context):
     else:
         return 'Neutral'
 
-def predict_sentiment_hybrid(context):
+def predict_sentiment_hybrid(text):
     """Hybrid prediction: model + rule-based"""
     try:
         if absa_model is not None:
             try:
-                pred = absa_model.predict([context])[0]
+                pred = absa_model.predict([text])[0]
                 if pred == 'Neutral':
-                    rule_pred = get_sentiment_rule_based(context)
+                    rule_pred = get_sentiment_rule_based(text)
                     if rule_pred != 'Neutral':
                         return rule_pred
                 return pred
             except:
-                return get_sentiment_rule_based(context)
+                return get_sentiment_rule_based(text)
         else:
-            return get_sentiment_rule_based(context)
+            return get_sentiment_rule_based(text)
     except:
-        return get_sentiment_rule_based(context)
+        return get_sentiment_rule_based(text)
 
 # ===============================
-# Preprocessing
+# Aspect Extraction (Simple Rule-Based)
 # ===============================
 
-def preprocess(text):
-    if not text:
-        return ""
-    text = text.lower()
-    text = re.sub(r"http\S+", "", text)
-    text = re.sub(r"[^a-zA-Z0-9\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-def tokenize(text):
-    if not text:
-        return []
-    return text.split()
-
-# ===============================
-# Feature Extraction CRF
-# ===============================
-
-def word2features(sent, i):
-    try:
-        word = str(sent[i][0])
-        features = {
-            "bias": 1.0,
-            "word.lower": word.lower(),
-            "word[-3:]": word[-3:],
-            "word[-2:]": word[-2:],
-            "word[:2]": word[:2],
-            "word[:3]": word[:3],
-            "word.isupper": word.isupper(),
-            "word.istitle": word.istitle(),
-            "word.isdigit": word.isdigit(),
-            "word.length": len(word)
-        }
-        
-        if i > 0:
-            prev = str(sent[i-1][0])
-            features["-1:word.lower"] = prev.lower()
-        else:
-            features["BOS"] = True
-            
-        if i < len(sent)-1:
-            nxt = str(sent[i+1][0])
-            features["+1:word.lower"] = nxt.lower()
-        else:
-            features["EOS"] = True
-            
-        return features
-    except:
-        return {"bias": 1.0}
-
-def sentence2features(words):
-    try:
-        sent = [(w, "O") for w in words]
-        return [word2features(sent, i) for i in range(len(sent))]
-    except:
-        return []
-
-# ===============================
-# Predict Functions
-# ===============================
-
-def predict_ner(review):
-    """Predict NER with safe fallback"""
-    try:
-        review = preprocess(review)
-        words = tokenize(review)
-        
-        if not words:
-            return [], []
-        
-        if ner_model is None:
-            return words, ["O"] * len(words)
-        
-        features = sentence2features(words)
-        if not features:
-            return words, ["O"] * len(words)
-        
-        tags = ner_model.predict([features])[0]
-        
-        if not isinstance(tags, list):
-            tags = list(tags)
-        
-        if len(tags) != len(words):
-            return words, ["O"] * len(words)
-            
-        return words, tags
-        
-    except Exception as e:
-        words = tokenize(preprocess(review))
-        return words, ["O"] * len(words) if words else [], []
-
-def extract_aspects(words, tags):
-    aspects = []
-    current = []
-    label = None
-    
-    try:
-        if not words or not tags or len(words) != len(tags):
-            return []
-            
-        for word, tag in zip(words, tags):
-            if tag.startswith("B-"):
-                if current:
-                    aspects.append({
-                        "aspect": label,
-                        "context": " ".join(current)
-                    })
-                label = tag.replace("B-", "")
-                current = [word]
-            elif tag.startswith("I-"):
-                current.append(word)
-            else:
-                if current:
-                    aspects.append({
-                        "aspect": label,
-                        "context": " ".join(current)
-                    })
-                    current = []
-                    label = None
-        
-        if current:
-            aspects.append({
-                "aspect": label,
-                "context": " ".join(current)
-            })
-            
-        return aspects
-    except:
-        return []
-
-def extract_aspects_fallback(review):
-    """Extract aspects using simple rules if NER fails"""
+def extract_aspects_simple(review):
+    """Extract aspects using simple keyword matching"""
     review_lower = review.lower()
     aspects = []
     
-    food_keywords = ['makanan', 'makan', 'rasa', 'enak', 'lezat', 'hambar', 'basi']
-    if any(word in review_lower for word in food_keywords):
-        aspects.append({
-            "aspect": "FOOD",
-            "context": review
-        })
+    # Define aspect keywords
+    aspect_keywords = {
+        'FOOD': ['makanan', 'makan', 'rasa', 'enak', 'lezat', 'hambar', 'basi', 'menu', 'porsi'],
+        'SERVICE': ['pelayanan', 'service', 'ramah', 'cepat', 'lambat', 'staff', 'pelayan'],
+        'AMBIENCE': ['tempat', 'suasana', 'nyaman', 'bersih', 'kotor', 'dekorasi', 'ruangan'],
+        'PRICE': ['harga', 'mahal', 'murah', 'worth', 'terjangkau', 'biaya']
+    }
     
-    service_keywords = ['pelayanan', 'service', 'ramah', 'cepat', 'lambat', 'staff']
-    if any(word in review_lower for word in service_keywords):
-        aspects.append({
-            "aspect": "SERVICE",
-            "context": review
-        })
+    # Check each aspect
+    for aspect, keywords in aspect_keywords.items():
+        if any(keyword in review_lower for keyword in keywords):
+            aspects.append({
+                "aspect": aspect,
+                "context": review
+            })
     
-    ambience_keywords = ['tempat', 'suasana', 'nyaman', 'bersih', 'kotor', 'dekorasi']
-    if any(word in review_lower for word in ambience_keywords):
-        aspects.append({
-            "aspect": "AMBIENCE",
-            "context": review
-        })
-    
-    price_keywords = ['harga', 'mahal', 'murah', 'worth', 'terjangkau']
-    if any(word in review_lower for word in price_keywords):
-        aspects.append({
-            "aspect": "PRICE",
-            "context": review
-        })
-    
+    # If no aspects found, use entire review as miscellaneous
     if not aspects:
         aspects.append({
             "aspect": "MISCELLANEOUS",
@@ -337,16 +192,10 @@ def extract_aspects_fallback(review):
     return aspects
 
 def predict_review(review):
+    """Predict sentiment for each aspect in review"""
     try:
-        words, tags = predict_ner(review)
-        
-        if not words:
-            return pd.DataFrame()
-        
-        aspects = extract_aspects(words, tags)
-        
-        if not aspects:
-            aspects = extract_aspects_fallback(review)
+        # Extract aspects using simple rules
+        aspects = extract_aspects_simple(review)
         
         hasil = []
         for item in aspects:
@@ -363,7 +212,7 @@ def predict_review(review):
         return pd.DataFrame()
 
 # ===============================
-# UI Functions - Enhanced NER Display (No Plotly)
+# UI Functions
 # ===============================
 
 def color_sentiment(val):
@@ -388,136 +237,16 @@ def get_sentiment_emoji(sentiment):
     else:
         return '⚪'
 
-def display_ner_tokens_enhanced(words, tags):
-    """
-    Enhanced NER visualization with better styling - No Plotly required
-    """
-    try:
-        if not words:
-            return """
-            <div style="padding: 1.5rem; background: #f8f9fa; border-radius: 12px; border: 2px dashed #dee2e6; text-align: center; color: #6c757d;">
-                <span style="font-size: 1.2rem;">🔍</span><br>
-                Tidak ada kata untuk divisualisasikan
-            </div>
-            """
-        
-        if not tags:
-            return """
-            <div style="padding: 1.5rem; background: #f8f9fa; border-radius: 12px; border: 2px dashed #dee2e6; text-align: center; color: #6c757d;">
-                <span style="font-size: 1.2rem;">⚠️</span><br>
-                Tidak ada tag NER yang tersedia
-            </div>
-            """
-        
-        if not isinstance(tags, list):
-            tags = list(tags)
-        
-        if len(words) != len(tags):
-            return f"""
-            <div style="padding: 1.5rem; background: #fff3cd; border-radius: 12px; border: 2px solid #ffc107; text-align: center; color: #856404;">
-                <span style="font-size: 1.2rem;">⚠️</span><br>
-                Jumlah kata ({len(words)}) tidak sama dengan jumlah tag ({len(tags)})
-            </div>
-            """
-        
-        # Tag color mapping with better colors
-        tag_config = {
-            'B-FOOD': {'color': '#fce4ec', 'border': '#e57373', 'label': 'Food', 'emoji': '🍔'},
-            'I-FOOD': {'color': '#f8bbd0', 'border': '#f06292', 'label': 'Food', 'emoji': '🍔'},
-            'B-SERVICE': {'color': '#e3f2fd', 'border': '#64b5f6', 'label': 'Service', 'emoji': '🛎️'},
-            'I-SERVICE': {'color': '#bbdefb', 'border': '#42a5f5', 'label': 'Service', 'emoji': '🛎️'},
-            'B-AMBIENCE': {'color': '#e8f5e9', 'border': '#81c784', 'label': 'Ambience', 'emoji': '🏠'},
-            'I-AMBIENCE': {'color': '#c8e6c9', 'border': '#66bb6a', 'label': 'Ambience', 'emoji': '🏠'},
-            'B-PRICE': {'color': '#fff3e0', 'border': '#ffb74d', 'label': 'Price', 'emoji': '💰'},
-            'I-PRICE': {'color': '#ffe0b2', 'border': '#ffa726', 'label': 'Price', 'emoji': '💰'},
-            'B-MISCELLANEOUS': {'color': '#f3e5f5', 'border': '#ce93d8', 'label': 'Misc', 'emoji': '📌'},
-            'I-MISCELLANEOUS': {'color': '#e1bee7', 'border': '#ab47bc', 'label': 'Misc', 'emoji': '📌'},
-            'O': {'color': '#f5f5f5', 'border': '#bdbdbd', 'label': 'Other', 'emoji': '⚪'}
-        }
-        
-        token_html = """
-        <div style="
-            display: flex; 
-            flex-wrap: wrap; 
-            gap: 0.6rem; 
-            padding: 1.5rem; 
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 16px; 
-            border: 2px solid #dee2e6;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            min-height: 60px;
-            align-items: center;
-        ">
-        """
-        
-        for word, tag in zip(words, tags):
-            config = tag_config.get(tag, tag_config['O'])
-            
-            token_html += f"""
-            <span style="
-                background: {config['color']};
-                padding: 0.5rem 0.8rem;
-                border-radius: 10px;
-                font-size: 1.05rem;
-                font-weight: 500;
-                border: 2px solid {config['border']};
-                display: inline-flex;
-                align-items: center;
-                gap: 0.3rem;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.06);
-                transition: transform 0.2s ease, box-shadow 0.2s ease;
-                cursor: default;
-            "
-            onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';"
-            onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.06)';"
-            >
-                {config['emoji']}
-                <span style="margin: 0 0.2rem;">{word}</span>
-                <span style="
-                    font-size: 0.6rem;
-                    color: #495057;
-                    background: rgba(255,255,255,0.7);
-                    padding: 0.1rem 0.4rem;
-                    border-radius: 8px;
-                    font-weight: 600;
-                    border: 1px solid {config['border']};
-                ">{config['label']}</span>
-            </span>
-            """
-        token_html += '</div>'
-        return token_html
-        
-    except Exception as e:
-        return f"""
-        <div style="padding: 1.5rem; background: #f8d7da; border-radius: 12px; border: 2px solid #dc3545; text-align: center; color: #721c24;">
-            <span style="font-size: 1.2rem;">❌</span><br>
-            Error visualizing NER tokens: {str(e)}
-        </div>
-        """
-
-def display_ner_legend():
-    """Display legend for NER tags"""
-    legend_html = """
-    <div style="
-        display: flex; 
-        flex-wrap: wrap; 
-        gap: 0.5rem; 
-        padding: 0.75rem 1rem;
-        background: white;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        margin-top: 0.75rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.04);
-    ">
-        <span style="background: #fce4ec; padding: 0.2rem 0.6rem; border-radius: 6px; border: 2px solid #e57373; font-size: 0.8rem; font-weight: 500;">🍔 Food</span>
-        <span style="background: #e3f2fd; padding: 0.2rem 0.6rem; border-radius: 6px; border: 2px solid #64b5f6; font-size: 0.8rem; font-weight: 500;">🛎️ Service</span>
-        <span style="background: #e8f5e9; padding: 0.2rem 0.6rem; border-radius: 6px; border: 2px solid #81c784; font-size: 0.8rem; font-weight: 500;">🏠 Ambience</span>
-        <span style="background: #fff3e0; padding: 0.2rem 0.6rem; border-radius: 6px; border: 2px solid #ffb74d; font-size: 0.8rem; font-weight: 500;">💰 Price</span>
-        <span style="background: #f3e5f5; padding: 0.2rem 0.6rem; border-radius: 6px; border: 2px solid #ce93d8; font-size: 0.8rem; font-weight: 500;">📌 Misc</span>
-        <span style="background: #f5f5f5; padding: 0.2rem 0.6rem; border-radius: 6px; border: 2px solid #bdbdbd; font-size: 0.8rem; font-weight: 500;">⚪ Other</span>
-    </div>
-    """
-    return legend_html
+def get_aspect_emoji(aspect):
+    """Get emoji for aspect"""
+    aspect_emoji = {
+        'FOOD': '🍔',
+        'SERVICE': '🛎️',
+        'AMBIENCE': '🏠',
+        'PRICE': '💰',
+        'MISCELLANEOUS': '📌'
+    }
+    return aspect_emoji.get(aspect.upper(), '📌')
 
 # ===============================
 # UI - Main
@@ -534,9 +263,8 @@ st.divider()
 with st.sidebar:
     st.header("📊 Tentang Aplikasi")
     st.markdown("""
-    Aplikasi ini menggunakan **Named Entity Recognition (NER)** 
-    dan **Aspect Based Sentiment Analysis (ABSA)** untuk 
-    menganalisis sentimen review restoran.
+    Aplikasi ini menggunakan **Aspect Based Sentiment Analysis (ABSA)** 
+    untuk menganalisis sentimen review restoran.
     
     **Fitur Hybrid**: Model + Rule-Based untuk akurasi lebih baik.
     """)
@@ -661,10 +389,14 @@ if analyze_button:
                 with col_total:
                     st.metric("📊 Total Aspek", total)
                 
-                # Results table
+                # Results table with aspect emojis
                 st.subheader("📋 Hasil Analisis per Aspek")
                 
+                # Add emoji to aspect
                 display_df = hasil.copy()
+                display_df['Aspect'] = display_df['Aspect'].apply(
+                    lambda x: f"{get_aspect_emoji(x)} {x}"
+                )
                 display_df['Sentiment'] = display_df['Sentiment'].apply(
                     lambda x: f"{get_sentiment_emoji(x)} {x}"
                 )
@@ -684,20 +416,6 @@ if analyze_button:
                         "Sentiment": "Sentimen"
                     }
                 )
-                
-                # Enhanced NER Visualization
-                st.divider()
-                st.subheader("🏷️ Named Entity Recognition (NER)")
-                
-                words, tags = predict_ner(review)
-                
-                # Display enhanced NER tokens
-                ner_html = display_ner_tokens_enhanced(words, tags)
-                st.markdown(ner_html, unsafe_allow_html=True)
-                
-                # Display legend
-                if words and tags and len(words) == len(tags):
-                    st.markdown(display_ner_legend(), unsafe_allow_html=True)
                 
                 # Save to history
                 history_entry = {
@@ -723,5 +441,5 @@ if analyze_button:
 
 st.divider()
 st.caption("""
-Dibangun dengan ❤️ menggunakan **Streamlit** · **CRF** untuk NER · **Multinomial Naive Bayes** untuk ABSA · **Hybrid Rule-Based** untuk akurasi lebih baik
+Dibangun dengan ❤️ menggunakan **Streamlit** · **Multinomial Naive Bayes** untuk ABSA · **Hybrid Rule-Based** untuk akurasi lebih baik
 """)
